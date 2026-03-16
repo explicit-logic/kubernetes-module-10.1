@@ -15,35 +15,37 @@ https://www.techworld-with-nana.com/devops-bootcamp
 
 ---
 
-The installation documentation for Minikube can be found here:
+## Prerequisites
 
-https://minikube.sigs.k8s.io/docs/start/
+Install Minikube by following the [official documentation](https://minikube.sigs.k8s.io/docs/start/).
 
-![](./images/status.png)
+![Minikube status](./images/status.png)
 
-![](./images/cli.png)
+![kubectl CLI](./images/cli.png)
 
 ---
 
-### Deploy MongoDB and MongoExpress with configuration and credentials extracted into ConfigMap and Secret
+## Deploy MongoDB and Mongo Express with ConfigMap and Secret
 
-- Overview
+### Architecture Overview
 
-![](./images/overview.png)
+The setup consists of a MongoDB database and a Mongo Express web UI, with credentials stored in a Kubernetes **Secret** and the database URL stored in a **ConfigMap**.
 
-![](./images/request-flow.png)
+![Architecture overview](./images/overview.png)
 
-1. Create Mongo DB deployment config
+![Request flow](./images/request-flow.png)
+
+#### 1. Generate the MongoDB Deployment manifest
 
 ```sh
 kubectl create deploy mongodb-deployment --image mongo --dry-run=client -o yaml > mongo.yaml
 ```
-See: [](./mongo.yaml)
 
+See: [mongo.yaml](./mongo.yaml)
 
-2. Create secrets
+#### 2. Create the Secret for database credentials
 
-Encode credentials
+Base64-encode the credentials:
 
 ```sh
 echo -n 'root-user' | base64
@@ -52,47 +54,49 @@ echo -n 'root-user' | base64
 echo -n 'root-password' | base64
 # cm9vdC1wYXNzd29yZA==
 ```
-See: [](./mongo-secret.yaml)
 
-Run:
+See: [mongo-secret.yaml](./mongo-secret.yaml)
+
+Apply the secret:
+
 ```sh
 kubectl apply -f mongo-secret.yaml
 ```
 
-3. Add secret reference to deployment config
+#### 3. Reference the Secret in the MongoDB Deployment
+
+Add the following environment variables to the container spec in `mongo.yaml`:
 
 ```yaml
-        env:
-        - name: MONGO_INITDB_ROOT_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: mongodb-secret
-              key: mongo-root-username
-
-        - name: MONGO_INITDB_ROOT_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mongodb-secret
-              key: mongo-root-password
+env:
+  - name: MONGO_INITDB_ROOT_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: mongodb-secret
+        key: mongo-root-username
+  - name: MONGO_INITDB_ROOT_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: mongodb-secret
+        key: mongo-root-password
 ```
 
-See: [](./mongo.yaml)
+See: [mongo.yaml](./mongo.yaml)
 
+#### 4. Deploy MongoDB
 
-4. Launch mongo db deployment
-
-Run:
 ```sh
 kubectl apply -f mongo.yaml
 ```
 
-![](./images/run-mongo.png)
+![MongoDB deployment running](./images/run-mongo.png)
 
-5. Add mongodb service
+#### 5. Add a ClusterIP Service for MongoDB
 
-Add these lines to `mongo.yaml` config:
+Append the following Service definition to `mongo.yaml`:
 
 ```yaml
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -101,79 +105,82 @@ spec:
   selector:
     app: mongodb-deployment
   ports:
-  - protocol: TCP
-    port: 27017
-    targetPort: 27017
+    - protocol: TCP
+      port: 27017
+      targetPort: 27017
 ```
-See: [](./mongo.yaml)
 
-Run:
+See: [mongo.yaml](./mongo.yaml)
+
+Apply the updated manifest:
+
 ```sh
 kubectl apply -f mongo.yaml
 ```
 
-![](./images/mongodb-service.png)
+![MongoDB service](./images/mongodb-service.png)
 
-
-6. Create a configmap with database url
+#### 6. Create a ConfigMap for the database URL
 
 ```sh
-kubectl create configmap mongodb-configmap --from-literal=database_url="mongodb-service:27017" --dry-run=client -o yaml > mongo-configmap.yaml
+kubectl create configmap mongodb-configmap \
+  --from-literal=database_url="mongodb-service:27017" \
+  --dry-run=client -o yaml > mongo-configmap.yaml
 ```
 
-Run:
+Apply the ConfigMap:
+
 ```sh
 kubectl apply -f mongo-configmap.yaml
 ```
 
+#### 7. Create the Mongo Express Deployment
 
-7. Create MongoExpress deployment
+Generate the base manifest:
 
 ```sh
 kubectl create deploy mongo-express --image mongo-express --dry-run=client -o yaml > mongo-express.yaml
 ```
 
-Then add the following lines:
+Then add the following environment variables to the container spec:
 
 ```yaml
-   env:
-        - name: ME_CONFIG_MONGODB_ADMINUSERNAME
-          valueFrom:
-            secretKeyRef:
-              name: mongodb-secret
-              key: mongo-root-username
-
-        - name: ME_CONFIG_MONGODB_ADMINPASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mongodb-secret
-              key: mongo-root-password
-
-        - name: DATABASE_URL
-          valueFrom:
-            configMapKeyRef:
-              name: mongodb-configmap
-              key: database_url
-
-        - name: ME_CONFIG_MONGODB_URL
-          value: "mongodb://$(ME_CONFIG_MONGODB_ADMINUSERNAME):$(ME_CONFIG_MONGODB_ADMINPASSWORD)@$(DATABASE_URL)"
+env:
+  - name: ME_CONFIG_MONGODB_ADMINUSERNAME
+    valueFrom:
+      secretKeyRef:
+        name: mongodb-secret
+        key: mongo-root-username
+  - name: ME_CONFIG_MONGODB_ADMINPASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: mongodb-secret
+        key: mongo-root-password
+  - name: DATABASE_URL
+    valueFrom:
+      configMapKeyRef:
+        name: mongodb-configmap
+        key: database_url
+  - name: ME_CONFIG_MONGODB_URL
+    value: "mongodb://$(ME_CONFIG_MONGODB_ADMINUSERNAME):$(ME_CONFIG_MONGODB_ADMINPASSWORD)@$(DATABASE_URL)"
 ```
-See: [](./mongo-express.yaml)
 
-Run
+See: [mongo-express.yaml](./mongo-express.yaml)
+
+Deploy Mongo Express:
 
 ```sh
 kubectl apply -f mongo-express.yaml
 ```
 
-![](./images/mongo-express-deploy.png)
+![Mongo Express deployment](./images/mongo-express-deploy.png)
 
+#### 8. Add a LoadBalancer Service for Mongo Express
 
-8. Create Mongo Express service
+Append the following Service definition to `mongo-express.yaml`:
 
 ```yaml
 ---
-
 apiVersion: v1
 kind: Service
 metadata:
@@ -183,30 +190,36 @@ spec:
     app: mongo-express
   type: LoadBalancer
   ports:
-  - protocol: TCP
-    port: 8081
-    targetPort: 8081
-    nodePort: 30000
+    - protocol: TCP
+      port: 8081
+      targetPort: 8081
+      nodePort: 30000
 ```
-See: [](./mongo-express.yaml)
 
-run:
+See: [mongo-express.yaml](./mongo-express.yaml)
+
+Apply the updated manifest:
+
 ```sh
 kubectl apply -f mongo-express.yaml
 ```
 
-9. Assign public IP address
+#### 9. Access Mongo Express in the browser
+
+Expose the service via Minikube:
 
 ```sh
 minikube service mongo-express-service
 ```
 
-Sign In
+Sign in with the default Mongo Express credentials:
 
-user: `admin`
-password: `pass`
+| Field    | Value   |
+|----------|---------|
+| Username | `admin` |
+| Password | `pass`  |
 
-Demo
+### Demo
 
-![](./images/demo.gif)
+![Demo](./images/demo.gif)
 
